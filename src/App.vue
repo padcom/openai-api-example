@@ -51,7 +51,7 @@ async function ask() {
   question.value = ''
 
   stream.value = await api.chat.completions.create({
-    model: '',
+    model: 'gemma3:4b',
     messages: [...messages.value as Array<ChatCompletionMessage>].reverse(),
     stream: true,
   })
