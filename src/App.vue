@@ -17,7 +17,6 @@ import { marked } from 'marked'
 
 const renderer = new marked.Renderer()
 renderer.link = function({ href, title, text }) {
-  console.log('Here!')
   return `<a target="_blank" href="${href}" title="${title}">${text}</a>`;
 }
 
@@ -34,8 +33,8 @@ const messages = ref<Message[]>([
 const question = ref('what is the highest mountain?')
 
 const api = new OpenAI({
-  baseURL: 'http://localhost:1234/v1',
-  apiKey: '1234',
+  baseURL: import.meta.env.VITE_APP_OPENAI_BASE_URL,
+  apiKey: import.meta.env.VITE_APP_OPENAI_API_KEY,
   dangerouslyAllowBrowser: true,
 })
 
