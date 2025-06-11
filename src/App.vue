@@ -6,6 +6,7 @@
   </div>
   <div class="prompt">
     <input type="text" v-model="question" :readonly="processing"
+      placeholder="Press Enter to send, Escape to abort response, Ctrl+Delete to clear chat"
       @keydown.enter="ask()"
       @keydown.esc="abort()"
       @keydown.ctrl.delete="!processing ? newChat() : {}"
@@ -74,7 +75,7 @@ function abort() {
 
 function newChat() {
   messages.value = [
-    { role: 'system', content: 'You are a helpful assistant. I come from [LM Studio](https://lmstudio.ai)' },
+    { role: 'system', content: 'You are a helpful assistant. You come from [LM Studio](https://lmstudio.ai)' },
   ]
 }
 
