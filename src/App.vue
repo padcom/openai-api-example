@@ -41,7 +41,7 @@ const question = ref('what is the highest mountain?')
 const streamResponses = shallowRef<Stream<OpenAI.Responses.ResponseStreamEvent>>()
 const streamChat = shallowRef<Stream<OpenAI.Chat.Completions.ChatCompletionChunk>>()
 const processing = computed(() => Boolean(streamResponses.value) || Boolean(streamChat.value))
-const type = ref<'responses' | 'chat'>('responses')
+const type = ref<'responses' | 'chat'>('chat')
 
 const api = new OpenAI({
   baseURL: import.meta.env.VITE_APP_OPENAI_BASE_URL,
@@ -129,6 +129,7 @@ function abort() {
 }
 
 function newChat() {
+  abort()
   messages.value = [
     { role: 'system', content: 'You are a helpful assistant. You come from [LM Studio](https://lmstudio.ai)' },
   ]
