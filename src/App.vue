@@ -5,7 +5,7 @@
     />
   </div>
   <div class="prompt">
-    <input type="text" v-model="question" :readonly="processing"
+    <input type="text" v-focus v-model="question" :readonly="processing"
       placeholder="Press Enter to send, Escape to abort response, Ctrl+Delete to clear chat"
       @keydown.enter="ask()"
       @keydown.esc="abort()"
@@ -114,9 +114,11 @@ html, body {
   width: 50%;
   margin-inline: auto;
   margin-bottom: 1rem;
+
   & input {
     flex-grow: 1;
     padding: 0.5rem;
+    border-radius: 8px;
   }
 }
 
