@@ -5,12 +5,16 @@
     />
   </div>
   <div class="prompt">
-    <input type="text" v-model="question" @keydown.enter="ask()">
+    <input type="text" v-model="question"
+      @keydown.enter="ask()"
+      @keydown.esc="abort()"
+      @keydown.ctrl.delete="newChat()"
+    >
   </div>
 </template>
 
 <script lang="ts" setup>
-import { ref } from 'vue'
+import { ref, onMounted } from 'vue'
 import { OpenAI } from 'openai'
 import type { ChatCompletionMessageParam } from 'openai/resources/index.mjs'
 import { marked } from 'marked'
@@ -27,9 +31,7 @@ interface Message {
   content: string
 }
 
-const messages = ref<Message[]>([
-  { role: 'system', content: 'You are a helpful assistant. I come from [LM Studio](https://lmstudio.ai)' },
-])
+const messages = ref<Message[]>([])
 const question = ref('what is the highest mountain?')
 
 const api = new OpenAI({
@@ -37,6 +39,8 @@ const api = new OpenAI({
   apiKey: import.meta.env.VITE_APP_OPENAI_API_KEY,
   dangerouslyAllowBrowser: true,
 })
+
+let abortController = new AbortController()
 
 async function ask() {
   messages.value.unshift({ role: 'user', content: question.value })
@@ -48,7 +52,9 @@ async function ask() {
     stream: true,
   })
 
-  messages.value.unshift({ role: '', content: '' })
+  abortController = stream.controller
+
+  messages.value.unshift({ role: 'assistant', content: '' })
 
   for await (const event of stream) {
     // @ts-ignore xxx
@@ -56,6 +62,18 @@ async function ask() {
     if (event.choices[0].delta.content) messages.value[0].content += event.choices[0].delta.content
   }
 }
+
+function abort() {
+  abortController?.abort()
+}
+
+function newChat() {
+  messages.value = [
+    { role: 'system', content: 'You are a helpful assistant. I come from [LM Studio](https://lmstudio.ai)' },
+  ]
+}
+
+onMounted(newChat)
 </script>
 
 <style lang="postcss">
