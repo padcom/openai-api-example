@@ -17,7 +17,7 @@
 <script lang="ts" setup>
 import { ref, onMounted, shallowRef, computed } from 'vue'
 import { OpenAI } from 'openai'
-import type { ChatCompletionMessageParam } from 'openai/resources/index.mjs'
+import type { ChatCompletionMessage, ChatCompletionMessageParam } from 'openai/resources/index.mjs'
 import { marked } from 'marked'
 import type { Stream } from 'openai/core/streaming.mjs'
 
@@ -52,7 +52,7 @@ async function ask() {
 
   stream.value = await api.chat.completions.create({
     model: '',
-    messages: messages.value as Array<ChatCompletionMessageParam>,
+    messages: [...messages.value as Array<ChatCompletionMessage>].reverse(),
     stream: true,
   })
 
@@ -60,9 +60,17 @@ async function ask() {
 
   try {
     for await (const event of stream.value) {
-      // @ts-ignore xxx
-      if (!messages.value[0].role) messages.value[0].role = event.choices[0].delta.role
-      if (event.choices[0].delta.content) messages.value[0].content += event.choices[0].delta.content
+      if (messages.value[0].role !== event.choices[0].delta.role) {
+        if (!messages.value[0].role && event.choices[0].delta.role) {
+          messages.value[0].role = event.choices[0].delta.role
+        } else if (event.choices[0].delta.role) {
+          messages.value.unshift({ role: event.choices[0].delta.role, content: '' })
+        }
+      }
+
+      if (event.choices[0].delta.content) {
+        messages.value[0].content += event.choices[0].delta.content
+      }
     }
   } finally {
     stream.value = undefined
