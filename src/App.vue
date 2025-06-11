@@ -5,19 +5,20 @@
     />
   </div>
   <div class="prompt">
-    <input type="text" v-model="question"
+    <input type="text" v-model="question" :readonly="processing"
       @keydown.enter="ask()"
       @keydown.esc="abort()"
-      @keydown.ctrl.delete="newChat()"
+      @keydown.ctrl.delete="!processing ? newChat() : {}"
     >
   </div>
 </template>
 
 <script lang="ts" setup>
-import { ref, onMounted } from 'vue'
+import { ref, onMounted, shallowRef, computed } from 'vue'
 import { OpenAI } from 'openai'
 import type { ChatCompletionMessageParam } from 'openai/resources/index.mjs'
 import { marked } from 'marked'
+import type { Stream } from 'openai/core/streaming.mjs'
 
 const renderer = new marked.Renderer()
 renderer.link = function({ href, title, text }) {
@@ -33,6 +34,8 @@ interface Message {
 
 const messages = ref<Message[]>([])
 const question = ref('what is the highest mountain?')
+const stream = shallowRef<Stream<OpenAI.Chat.Completions.ChatCompletionChunk>>()
+const processing = computed(() => Boolean(stream.value))
 
 const api = new OpenAI({
   baseURL: import.meta.env.VITE_APP_OPENAI_BASE_URL,
@@ -40,31 +43,33 @@ const api = new OpenAI({
   dangerouslyAllowBrowser: true,
 })
 
-let abortController = new AbortController()
-
 async function ask() {
+  if (!question.value) return
+
   messages.value.unshift({ role: 'user', content: question.value })
   question.value = ''
 
-  const stream = await api.chat.completions.create({
+  stream.value = await api.chat.completions.create({
     model: '',
     messages: messages.value as Array<ChatCompletionMessageParam>,
     stream: true,
   })
 
-  abortController = stream.controller
-
   messages.value.unshift({ role: 'assistant', content: '' })
 
-  for await (const event of stream) {
-    // @ts-ignore xxx
-    if (!messages.value[0].role) messages.value[0].role = event.choices[0].delta.role
-    if (event.choices[0].delta.content) messages.value[0].content += event.choices[0].delta.content
+  try {
+    for await (const event of stream.value) {
+      // @ts-ignore xxx
+      if (!messages.value[0].role) messages.value[0].role = event.choices[0].delta.role
+      if (event.choices[0].delta.content) messages.value[0].content += event.choices[0].delta.content
+    }
+  } finally {
+    stream.value = undefined
   }
 }
 
 function abort() {
-  abortController?.abort()
+  stream.value?.controller.abort()
 }
 
 function newChat() {
