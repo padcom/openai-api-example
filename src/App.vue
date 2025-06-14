@@ -1,8 +1,14 @@
 <template>
-  <!-- <pre>{{ JSON.stringify(messages, null, 2) }}</pre> -->
+  <pre style="display: none">{{ JSON.stringify(messages, null, 2) }}</pre>
   <div class="messages-container">
-    <div v-for="message in messages" :key="message.id" class="markdown-body message" :class="{ [message.role]: true }"
-      v-html="marked(message.content, { renderer })"
+    <div v-for="message in messages" :key="message.id"
+      class="markdown-body message"
+      :class="{
+        [message.role]: true,
+        reasoning: message.reasoning,
+        tool: message.tool_calls || message.role === 'tool'
+      }"
+      v-html="marked(message.content || '', { renderer })"
     />
   </div>
   <div class="prompt">
@@ -18,7 +24,7 @@
 <script lang="ts" setup>
 import { ref, onMounted, shallowRef, computed } from 'vue'
 import { OpenAI } from 'openai'
-import type { ChatCompletionMessage, ChatCompletionMessageParam } from 'openai/resources/index.mjs'
+import type { ChatCompletionMessage, ChatCompletionMessageParam, ChatCompletionTool } from 'openai/resources/index.mjs'
 import { marked } from 'marked'
 import type { Stream } from 'openai/core/streaming.mjs'
 import type { ResponseIncompleteEvent, ResponseInputItem } from 'openai/resources/responses/responses.mjs'
@@ -28,16 +34,25 @@ renderer.link = function({ href, title, text }) {
   return `<a target="_blank" href="${href}" title="${title}">${text}</a>`;
 }
 
+interface ToolCall {
+  id?: string
+  type: 'function'
+  function: { name: string, arguments: string }
+}
+
 interface Message {
   id?: string
   name?: string
   role: string
-  content: string
+  content?: string
   reasoning?: boolean
+  tool_calls?: ToolCall[]
+  tool_call_id?: string
 }
 
 const messages = ref<Message[]>([])
-const question = ref('what is the highest mountain?')
+// const question = ref('what is the highest mountain?')
+const question = ref('what is the price of an apple?')
 const streamResponses = shallowRef<Stream<OpenAI.Responses.ResponseStreamEvent>>()
 const streamChat = shallowRef<Stream<OpenAI.Chat.Completions.ChatCompletionChunk>>()
 const processing = computed(() => Boolean(streamResponses.value) || Boolean(streamChat.value))
@@ -61,7 +76,7 @@ async function askResponses() {
 
   streamResponses.value = await api.responses.create({
     model: import.meta.env.VITE_APP_MODEL,
-    input: messages.value[0].content,
+    input: messages.value[0].content!,
     tools: [{ type: 'web_search_preview' }],
     previous_response_id: previousResponseId.value,
     store: true,
@@ -75,7 +90,7 @@ async function askResponses() {
     for await (const event of streamResponses.value) {
       if (event.type === 'response.reasoning.delta') {
         messages.value[0].reasoning = true
-        messages.value[0].content += event.delta
+        messages.value[0].content! += event.delta
       } else if (event.type === 'response.reasoning.done') {
         messages.value.unshift({ role: 'assistant', content: '' })
       } else if (event.type === 'response.output_text.delta') {
@@ -86,8 +101,92 @@ async function askResponses() {
         console.log(event.type, event)
       }
     }
+
+    return streamResponses.value
   } finally {
     streamResponses.value = undefined
+  }
+}
+
+const getFruitPrice: ChatCompletionTool = {
+  type: 'function',
+  function: {
+    name: 'getFruitPrice',
+    description: 'Retrieves price of a fruit specified by name',
+    parameters: {
+      type: 'object',
+      properties: {
+        name: { type: 'string' },
+      },
+      required: ['name'],
+      // additionalProperties: false,
+    },
+  },
+}
+
+async function processChatMessages() {
+  messages.value.unshift({ role: 'assistant', content: '' })
+
+  function processTextMessage(choice: OpenAI.Chat.Completions.ChatCompletionChunk.Choice) {
+    if (choice.delta.content === '<think>') {
+      messages.value[0].content += choice.delta.content
+      messages.value[0].reasoning = true
+    } else if (choice.delta.content === '</think>' && messages.value[0].reasoning) {
+      messages.value[0].content += choice.delta.content
+      // messages.value.unshift({ role: 'assistant', content: '' })
+    } else if (choice.delta.content) {
+      messages.value[0].content += choice.delta.content
+    }
+  }
+
+  function processToolCallMessage(delta: OpenAI.Chat.Completions.ChatCompletionChunk.Choice.Delta.ToolCall) {
+    if (!messages.value[0].tool_calls) messages.value[0].tool_calls = []
+
+    if (messages.value[0].tool_calls.length < delta.index + 1) {
+      messages.value[0].tool_calls.push({
+        id: delta.id,
+        type: 'function',
+        function: { name: '', arguments: '' },
+      })
+    }
+
+    const toolCall = messages.value[0].tool_calls[delta.index]
+
+    try {
+      if (delta.function?.name) toolCall.function.name += delta.function.name
+      if (delta.function?.arguments) toolCall.function.arguments += delta.function.arguments
+    } catch (e) {
+      console.error(e)
+      debugger
+    }
+  }
+
+  function processToolCallsMessage(choice: OpenAI.Chat.Completions.ChatCompletionChunk.Choice) {
+    for (const tool_call of choice.delta.tool_calls || []) {
+      processToolCallMessage(tool_call)
+    }
+
+    if (choice.finish_reason === 'tool_calls' && messages.value[0].tool_calls) {
+      // delete messages.value[0].content
+      messages.value[0].tool_calls = messages.value[0].tool_calls.map(toolCall => ({
+        ...toolCall,
+        function: {
+          name: toolCall.function.name,
+          arguments: toolCall.function.arguments
+        },
+      }))
+    }
+  }
+
+  try {
+    for await (const event of streamChat.value!) {
+      for (const choice of event.choices) {
+        processTextMessage(choice)
+        processToolCallsMessage(choice)
+      }
+    }
+  } finally {
+    streamChat.value = undefined
   }
 }
 
@@ -103,16 +202,24 @@ async function askChat() {
     model: import.meta.env.VITE_APP_MODEL,
     messages: [...messages.value as ChatCompletionMessageParam[]].reverse(),
     stream: true,
+    tools: [getFruitPrice],
   })
 
-  messages.value.unshift({ role: 'assistant', content: '' })
+  await processChatMessages()
 
-  try {
-    for await (const event of streamChat.value) {
-      messages.value[0].content += event.choices[0].delta.content
+  if (messages.value[0].tool_calls) {
+    for (const toolCall of messages.value[0].tool_calls) {
+      console.log('Requested a call to', toolCall.type, JSON.stringify(toolCall[toolCall.type]))
+      messages.value.unshift({ role: 'tool', content: '$5', tool_call_id: toolCall.id })
     }
-  } finally {
-    streamChat.value = undefined
+
+    streamChat.value = await api.chat.completions.create({
+      model: import.meta.env.VITE_APP_MODEL,
+      messages: [...messages.value as ChatCompletionMessageParam[]].reverse(),
+      stream: true,
+    })
+
+    await processChatMessages()
   }
 }
 
@@ -201,5 +308,12 @@ html, body {
   background-color: beige;
   align-self: self-start;
   border-bottom-right-radius: 0;
+
+  &.reasoning {
+    background-color: lightgrey;
+  }
+}
+.message.tool {
+  display: none;
 }
 </style>
