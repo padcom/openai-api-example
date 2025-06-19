@@ -1,33 +1,34 @@
 <template>
   <pre style="display: none">{{ JSON.stringify(messages, null, 2) }}</pre>
-  <div class="messages-container">
-    <div v-for="message in messages" :key="message.id"
-      class="markdown-body message"
-      :class="{
-        [message.role]: true,
-        reasoning: message.reasoning,
-        tool: message.tool_calls || message.role === 'tool'
-      }"
-      v-html="marked(message.content || '', { renderer })"
-    />
-  </div>
-  <div class="prompt">
-    <input type="text" v-focus v-model="question" :readonly="processing"
+  <Chat>
+    <Messages v-slot="{ message }" :messages>
+      <Message :message
+        class="markdown-body"
+        :class="{
+          reasoning: message.reasoning,
+          tool: message.tool_calls || message.role === 'tool'
+        }"
+      />
+    </Messages>
+    <Prompt
+      :readonly="processing"
       placeholder="Press Enter to send, Escape to abort response, Ctrl+Delete to clear chat"
-      @keydown.enter="ask()"
+      @query="ask($event)"
       @keydown.esc="abort()"
       @keydown.ctrl.delete="!processing ? newChat() : {}"
-    >
-  </div>
+    />
+  </Chat>
 </template>
 
 <script lang="ts" setup>
 import { ref, onMounted, shallowRef, computed } from 'vue'
 import { OpenAI } from 'openai'
-import type { ChatCompletionMessage, ChatCompletionMessageParam, ChatCompletionTool } from 'openai/resources/index.mjs'
+import type { ChatCompletionMessageParam, ChatCompletionTool } from 'openai/resources/index.mjs'
+import { v4 as uuid } from 'uuid'
 import { marked } from 'marked'
 import type { Stream } from 'openai/core/streaming.mjs'
-import type { ResponseIncompleteEvent, ResponseInputItem } from 'openai/resources/responses/responses.mjs'
+
+import { Chat, Messages, Message, Prompt, type ChatMessage } from '@padcom/chat-ui'
 
 const renderer = new marked.Renderer()
 renderer.link = function({ href, title, text }) {
@@ -40,19 +41,14 @@ interface ToolCall {
   function: { name: string, arguments: string }
 }
 
-interface Message {
-  id?: string
+interface Message extends ChatMessage {
   name?: string
-  role: string
-  content?: string
   reasoning?: boolean
   tool_calls?: ToolCall[]
   tool_call_id?: string
 }
 
 const messages = ref<Message[]>([])
-// const question = ref('what is the highest mountain?')
-const question = ref('what is the price of an apple?')
 const streamResponses = shallowRef<Stream<OpenAI.Responses.ResponseStreamEvent>>()
 const streamChat = shallowRef<Stream<OpenAI.Chat.Completions.ChatCompletionChunk>>()
 const processing = computed(() => Boolean(streamResponses.value) || Boolean(streamChat.value))
@@ -66,17 +62,14 @@ const api = new OpenAI({
 
 const previousResponseId = ref('')
 
-async function askResponses() {
+async function askResponses(question: string) {
   console.log('asking responses!')
 
-  if (!question.value) return
-
-  messages.value.unshift({ role: 'user', content: question.value })
-  question.value = ''
+  messages.value.push({ id: uuid(), role: 'user', content: question })
 
   streamResponses.value = await api.responses.create({
     model: import.meta.env.VITE_APP_MODEL,
-    input: messages.value[0].content!,
+    input: messages.value.at(-1)!.content!,
     tools: [{ type: 'web_search_preview' }],
     previous_response_id: previousResponseId.value,
     store: true,
@@ -84,17 +77,17 @@ async function askResponses() {
     reasoning: { effort: 'high' },
   })
 
-  messages.value.unshift({ role: 'assistant', content: '' })
+  messages.value.push({ id: uuid(), role: 'assistant', content: '' })
 
   try {
     for await (const event of streamResponses.value) {
       if (event.type === 'response.reasoning.delta') {
-        messages.value[0].reasoning = true
-        messages.value[0].content! += event.delta
+        messages.value.at(-1)!.reasoning = true
+        messages.value.at(-1)!.content! += event.delta
       } else if (event.type === 'response.reasoning.done') {
-        messages.value.unshift({ role: 'assistant', content: '' })
+        messages.value.push({ id: event.item_id, role: 'assistant', content: '' })
       } else if (event.type === 'response.output_text.delta') {
-        messages.value[0].content += event.delta
+        messages.value.at(-1)!.content += event.delta
       } else if (event.type === 'response.created') {
         previousResponseId.value = event.response.id
       } else {
@@ -125,32 +118,32 @@ const getFruitPrice: ChatCompletionTool = {
 }
 
 async function processChatMessages() {
-  messages.value.unshift({ role: 'assistant', content: '' })
+  messages.value.push({ id: uuid(), role: 'assistant', content: '' })
 
   function processTextMessage(choice: OpenAI.Chat.Completions.ChatCompletionChunk.Choice) {
     if (choice.delta.content === '<think>') {
-      messages.value[0].content += choice.delta.content
-      messages.value[0].reasoning = true
-    } else if (choice.delta.content === '</think>' && messages.value[0].reasoning) {
-      messages.value[0].content += choice.delta.content
-      // messages.value.unshift({ role: 'assistant', content: '' })
+      messages.value.at(-1)!.content += choice.delta.content
+      messages.value.at(-1)!.reasoning = true
+    } else if (choice.delta.content === '</think>' && messages.value.at(-1)!.reasoning) {
+      messages.value.at(-1)!.content += choice.delta.content
+      // messages.value.push({ role: 'assistant', content: '' })
     } else if (choice.delta.content) {
-      messages.value[0].content += choice.delta.content
+      messages.value.at(-1)!.content += choice.delta.content
     }
   }
 
   function processToolCallMessage(delta: OpenAI.Chat.Completions.ChatCompletionChunk.Choice.Delta.ToolCall) {
-    if (!messages.value[0].tool_calls) messages.value[0].tool_calls = []
+    if (!messages.value.at(-1)!.tool_calls) messages.value.at(-1)!.tool_calls = []
 
-    if (messages.value[0].tool_calls.length < delta.index + 1) {
-      messages.value[0].tool_calls.push({
+    if (messages.value.at(-1)!.tool_calls!.length < delta.index + 1) {
+      messages.value.at(-1)!.tool_calls!.push({
         id: delta.id,
         type: 'function',
         function: { name: '', arguments: '' },
       })
     }
 
-    const toolCall = messages.value[0].tool_calls[delta.index]
+    const toolCall = messages.value.at(-1)!.tool_calls![delta.index]
 
     try {
       if (delta.function?.name) toolCall.function.name += delta.function.name
@@ -166,9 +159,9 @@ async function processChatMessages() {
       processToolCallMessage(tool_call)
     }
 
-    if (choice.finish_reason === 'tool_calls' && messages.value[0].tool_calls) {
-      // delete messages.value[0].content
-      messages.value[0].tool_calls = messages.value[0].tool_calls.map(toolCall => ({
+    if (choice.finish_reason === 'tool_calls' && messages.value.at(-1)!.tool_calls) {
+      // delete messages.value.at(-1)!.content
+      messages.value.at(-1)!.tool_calls = messages.value.at(-1)!.tool_calls!.map(toolCall => ({
         ...toolCall,
         function: {
           name: toolCall.function.name,
@@ -190,13 +183,10 @@ async function processChatMessages() {
   }
 }
 
-async function askChat() {
+async function askChat(question: string) {
   console.log('asking chat!')
 
-  if (!question.value) return
-
-  messages.value.unshift({ role: 'user', content: question.value })
-  question.value = ''
+  messages.value.push({ id: uuid(), role: 'user', content: question })
 
   streamChat.value = await api.chat.completions.create({
     model: import.meta.env.VITE_APP_MODEL,
@@ -207,10 +197,10 @@ async function askChat() {
 
   await processChatMessages()
 
-  if (messages.value[0].tool_calls) {
-    for (const toolCall of messages.value[0].tool_calls) {
+  if (messages.value.at(-1)!.tool_calls) {
+    for (const toolCall of messages.value.at(-1)!.tool_calls!) {
       console.log('Requested a call to', toolCall.type, JSON.stringify(toolCall[toolCall.type]))
-      messages.value.unshift({ role: 'tool', content: '$5', tool_call_id: toolCall.id })
+      messages.value.push({ id: uuid(), role: 'tool', content: '$5', tool_call_id: toolCall.id })
     }
 
     streamChat.value = await api.chat.completions.create({
@@ -223,10 +213,10 @@ async function askChat() {
   }
 }
 
-function ask() {
+function ask(q: string) {
   switch (type.value) {
-    case 'responses': return askResponses()
-    case 'chat': return askChat()
+    case 'responses': return askResponses(q)
+    case 'chat': return askChat(q)
   }
 }
 
@@ -238,7 +228,7 @@ function abort() {
 function newChat() {
   abort()
   messages.value = [
-    { role: 'system', content: 'You are a helpful assistant. You come from [LM Studio](https://lmstudio.ai)' },
+    { id: uuid(), role: 'system', content: 'You are a helpful assistant. You come from [LM Studio](https://lmstudio.ai)' },
   ]
 
   previousResponseId.value = ''
@@ -263,56 +253,13 @@ html, body {
 </style>
 
 <style lang="postcss" scoped>
-.messages-container {
-  display: flex;
-  flex-direction: column-reverse;
-  gap: 0.5rem;
-  width: 50%;
+.chat {
+  max-width: clamp(400px, 50%, 50%);
   margin-inline: auto;
-  margin-top: 1rem;
-  overflow: auto;
-  flex-grow: 1;
+  height: calc(100dvh - 2rem);
+  padding-block: 1rem;
 }
 
-.prompt {
-  display: flex;
-  width: 50%;
-  margin-inline: auto;
-  margin-bottom: 1rem;
-
-  & input {
-    flex-grow: 1;
-    padding: 0.5rem;
-    border-radius: 8px;
-  }
-}
-
-.message {
-  max-width: 80%;
-  border-radius: 0.5rem;
-  padding: 8px 16px;
-}
-
-.message.system {
-  background-color: rgb(250, 237, 241);
-  align-self: center;
-  text-align: center;
-}
-.message.user {
-  background-color: aliceblue;
-  align-self: self-end;
-  text-align: right;
-  border-bottom-left-radius: 0;
-}
-.message.assistant {
-  background-color: beige;
-  align-self: self-start;
-  border-bottom-right-radius: 0;
-
-  &.reasoning {
-    background-color: lightgrey;
-  }
-}
 .message.tool {
   display: none;
 }

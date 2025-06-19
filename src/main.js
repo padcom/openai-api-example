@@ -1,4 +1,5 @@
 import 'github-markdown-css'
+import "@padcom/chat-ui/dist/index.css"
 import { createApp } from 'vue'
 import App from './App.vue'
 import focus from './directives/focus'
