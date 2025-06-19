@@ -12,7 +12,7 @@
   "license": "MIT",
   "type": "commonjs",
   "devDependencies": {
-    "@padcom/chat-ui": "^0.0.5",
+    "@padcom/chat-ui": "^0.0.6",
     "@vitejs/plugin-vue": "^5.2.4",
     "@vue/tsconfig": "0.7.0",
     "github-markdown-css": "^5.8.1",
