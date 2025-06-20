@@ -11,7 +11,7 @@
       />
     </Messages>
     <Prompt
-      :readonly="processing"
+      :disabled="processing"
       placeholder="Press Enter to send, Escape to abort response, Ctrl+Delete to clear chat"
       @query="ask($event)"
       @keydown.esc="abort()"
@@ -21,19 +21,12 @@
 </template>
 
 <script lang="ts" setup>
-import { ref, onMounted, shallowRef, computed } from 'vue'
+import { ref, onMounted, shallowRef } from 'vue'
 import { OpenAI } from 'openai'
 import type { ChatCompletionMessageParam, ChatCompletionTool } from 'openai/resources/index.mjs'
-import { v4 as uuid } from 'uuid'
-import { marked } from 'marked'
 import type { Stream } from 'openai/core/streaming.mjs'
 
-import { Chat, Messages, Message, Prompt, type ChatMessage } from '@padcom/chat-ui'
-
-const renderer = new marked.Renderer()
-renderer.link = function({ href, title, text }) {
-  return `<a target="_blank" href="${href}" title="${title}">${text}</a>`;
-}
+import { uuid, Chat, Messages, Message, Prompt, addMessage, type ChatMessage } from '@padcom/chat-ui'
 
 interface ToolCall {
   id?: string
@@ -51,7 +44,7 @@ interface Message extends ChatMessage {
 const messages = ref<Message[]>([])
 const streamResponses = shallowRef<Stream<OpenAI.Responses.ResponseStreamEvent>>()
 const streamChat = shallowRef<Stream<OpenAI.Chat.Completions.ChatCompletionChunk>>()
-const processing = computed(() => Boolean(streamResponses.value) || Boolean(streamChat.value))
+const processing = ref(false)
 const type = ref<'responses' | 'chat'>('chat')
 
 const api = new OpenAI({
@@ -65,22 +58,31 @@ const previousResponseId = ref('')
 async function askResponses(question: string) {
   console.log('asking responses!')
 
+  processing.value = true
   messages.value.push({ id: uuid(), role: 'user', content: question })
 
-  streamResponses.value = await api.responses.create({
-    model: import.meta.env.VITE_APP_MODEL,
-    input: messages.value.at(-1)!.content!,
-    tools: [{ type: 'web_search_preview' }],
-    previous_response_id: previousResponseId.value,
-    store: true,
-    stream: true,
-    reasoning: { effort: 'high' },
-  })
+  try {
+    streamResponses.value = await api.responses.create({
+      model: import.meta.env.VITE_APP_MODEL,
+      input: messages.value.at(-1)!.content!,
+      tools: [{ type: 'web_search_preview' }],
+      previous_response_id: previousResponseId.value,
+      store: true,
+      stream: true,
+      reasoning: { effort: 'high' },
+    })
 
-  messages.value.push({ id: uuid(), role: 'assistant', content: '' })
+    addMessage(messages, { id: uuid(), role: 'assistant', content: '' })
+  } catch (e) {
+    processing.value = false
+    addMessage(messages, { id: uuid(), role: 'error', content: `${e}` })
+    throw e
+  }
+
+  console.log(3)
 
   try {
-    for await (const event of streamResponses.value) {
+    for await (const event of streamResponses.value!) {
       if (event.type === 'response.reasoning.delta') {
         messages.value.at(-1)!.reasoning = true
         messages.value.at(-1)!.content! += event.delta
@@ -188,12 +190,17 @@ async function askChat(question: string) {
 
   messages.value.push({ id: uuid(), role: 'user', content: question })
 
-  streamChat.value = await api.chat.completions.create({
-    model: import.meta.env.VITE_APP_MODEL,
-    messages: [...messages.value as ChatCompletionMessageParam[]].reverse(),
-    stream: true,
-    tools: [getFruitPrice],
-  })
+  try {
+    streamChat.value = await api.chat.completions.create({
+      model: import.meta.env.VITE_APP_MODEL,
+      messages: [...messages.value as ChatCompletionMessageParam[]].reverse(),
+      stream: true,
+      tools: [getFruitPrice],
+    })
+  } catch (e) {
+    addMessage(messages, { id: uuid(), role: 'error', content: `${e}` })
+    return
+  }
 
   await processChatMessages()
 
