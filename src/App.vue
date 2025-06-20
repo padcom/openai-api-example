@@ -27,6 +27,9 @@ import type { ChatCompletionMessageParam, ChatCompletionTool } from 'openai/reso
 import type { Stream } from 'openai/core/streaming.mjs'
 
 import { uuid, Chat, Messages, Message, Prompt, addMessage, type ChatMessage } from '@padcom/chat-ui'
+import "@padcom/chat-ui/dist/index.css"
+import "@padcom/chat-ui-formatter-marked"
+import 'github-markdown-css'
 
 interface ToolCall {
   id?: string
