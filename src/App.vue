@@ -28,8 +28,8 @@ import type { Stream } from 'openai/core/streaming.mjs'
 
 import { uuid, Chat, Messages, Message, Prompt, addMessage, type ChatMessage } from '@padcom/chat-ui'
 import "@padcom/chat-ui/dist/index.css"
-// import "@padcom/chat-ui-formatter-marked"
-import "@padcom/chat-ui-formatter-json"
+import "@padcom/chat-ui-formatter-marked"
+// import "@padcom/chat-ui-formatter-json"
 import 'github-markdown-css'
 
 interface ToolCall {
@@ -130,7 +130,7 @@ async function processChatMessages() {
       messages.value.at(-1)!.reasoning = true
     } else if (choice.delta.content === '</think>' && messages.value.at(-1)!.reasoning) {
       messages.value.at(-1)!.content += choice.delta.content
-      // addMessage(messages, { role: 'assistant', content: '' })
+      addMessage(messages, { role: 'assistant', content: '' })
     } else if (choice.delta.content) {
       messages.value.at(-1)!.content += choice.delta.content
     }
@@ -214,7 +214,7 @@ async function askChat(question: string) {
 
     streamChat.value = await api.chat.completions.create({
       model: import.meta.env.VITE_APP_MODEL,
-      messages: [...messages.value as ChatCompletionMessageParam[]].reverse(),
+      messages: messages.value as ChatCompletionMessageParam[],
       stream: true,
     })
 
@@ -267,6 +267,11 @@ html, body {
   margin-inline: auto;
   height: calc(100dvh - 2rem);
   padding-block: 1rem;
+}
+
+.message.reasoning {
+  font-style: italic;
+  opacity: 0.5;
 }
 
 .message.tool {
